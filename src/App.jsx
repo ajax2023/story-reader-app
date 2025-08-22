@@ -8,6 +8,7 @@ import PairDevice from './components/PairDevice.jsx'
 import DevicesPanel from './components/DevicesPanel.jsx'
 import DebugConsole from './components/DebugConsole.jsx'
 import { parseLaunchParams, getStatus, confirmPair, saveDeviceAuth, loadDeviceAuth, clearDeviceAuth, warnIfNonProdOrigin } from './lib/deviceAuth'
+import { getDeviceById, createDevice } from './lib/api'
 import { info, warn, error as logError } from './lib/log'
 
 function App() {
@@ -32,7 +33,7 @@ function App() {
         if (warnIfNonProdOrigin()) {
           alert('Note: Device CORS allows only https://story-reader-pwa.web.app. Pairing/uploads may fail on this origin.')
         }
-        const { device, action, session } = parseLaunchParams(window.location.search)
+        const { device, action, session, deviceId } = parseLaunchParams(window.location.search)
         if (device) {
           // Save/normalize device origin early so uploads know where to go
           saveDeviceAuth({ device })
@@ -41,18 +42,52 @@ function App() {
           try { await getStatus(device) } catch (e) { warn('App: device status failed', String(e)) }
           setPaired({ pairedDevice: loadDeviceAuth().device || '' })
         }
-        if (action === 'pair' && session && device) {
-          // Prompt for 6-digit code
-          const code = window.prompt('Enter the 6-digit code shown on the device:', '')
-          if (!code) return
+        // Registration check: if deviceId provided, ensure it's in backend
+        if (deviceId) {
           try {
-            const { token, ttl } = await confirmPair({ device, session, code })
-            info('App: device paired', { ttl, hasToken: !!token })
+            const existing = await getDeviceById(deviceId)
+            if (!existing) {
+              if (window.confirm(`Register device ${deviceId} to your account?`)) {
+                await createDevice({ id: deviceId, name: deviceId })
+                info('App: device registered', { deviceId })
+              } else {
+                info('App: device registration canceled by user', { deviceId })
+              }
+            }
+          } catch (e) {
+            warn('App: device registration check failed', String(e))
+          }
+        }
+
+        // Pairing: try silent confirm first; only prompt for code if required by device
+        if (action === 'pair' && session && device) {
+          try {
+            const { token, ttl } = await confirmPair({ device, session, deviceId })
+            info('App: device paired (silent)', { ttl, hasToken: !!token })
             alert('Device paired successfully')
             setPaired({ pairedDevice: loadDeviceAuth().device || '' })
           } catch (e) {
-            logError('App: pairing failed', String(e))
-            alert('Pairing failed: ' + (e.message || String(e)))
+            const msg = String(e?.message || e || '')
+            const needCode = (e && (e.code === 'code_required' || e.status === 403)) || /code/i.test(msg)
+            if (!needCode) {
+              logError('App: pairing failed (silent)', msg)
+              alert('Pairing failed: ' + msg)
+              return
+            }
+            const code = window.prompt('Enter the 6-digit code shown on the device:', '')
+            if (!code) {
+              warn('App: code entry canceled')
+              return
+            }
+            try {
+              const { token, ttl } = await confirmPair({ device, session, deviceId, code })
+              info('App: device paired (with code)', { ttl, hasToken: !!token })
+              alert('Device paired successfully')
+              setPaired({ pairedDevice: loadDeviceAuth().device || '' })
+            } catch (e2) {
+              logError('App: pairing failed (with code)', String(e2))
+              alert('Pairing failed: ' + (e2.message || String(e2)))
+            }
           }
         }
       } catch (e) {

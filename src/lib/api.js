@@ -65,3 +65,17 @@ export async function patchDevice(id, patch) {
   info('Device patched', { id, patch, result })
   return result
 }
+
+export async function getDeviceById(id) {
+  try {
+    return await request(`/devices/${encodeURIComponent(id)}`, { method: 'GET' })
+  } catch (e) {
+    const msg = String(e && e.message || e)
+    if (msg.includes('404')) return null
+    throw e
+  }
+}
+
+export async function createDevice(payload) {
+  return await request('/devices', { method: 'POST', json: payload })
+}

@@ -5,6 +5,7 @@ export function parseLaunchParams(search = window.location.search) {
   let device = q.get('device') || ''
   const action = (q.get('action') || '').toLowerCase()
   const session = q.get('session') || ''
+  const deviceId = q.get('deviceId') || q.get('device_id') || ''
   try {
     if (device && !/^https?:\/\//i.test(device)) device = `http://${device}`
     if (device) {
@@ -12,7 +13,7 @@ export function parseLaunchParams(search = window.location.search) {
       device = `${u.protocol}//${u.host}` // normalize, strip path
     }
   } catch {}
-  return { device, action, session }
+  return { device, action, session, deviceId }
 }
 
 export function saveDeviceAuth({ device, token, ttl }) {
@@ -70,8 +71,11 @@ export async function getStatus(device) {
   }
 }
 
-export async function confirmPair({ device, session, code }) {
-  const body = new URLSearchParams({ session, code })
+export async function confirmPair({ device, session, code, deviceId }) {
+  const body = new URLSearchParams()
+  if (session) body.append('session', session)
+  if (deviceId) body.append('deviceId', deviceId)
+  if (code) body.append('code', code)
   const res = await fetch(`${device.replace(/\/$/, '')}/pair/confirm`, {
     method: 'POST',
     mode: 'cors',
@@ -81,8 +85,12 @@ export async function confirmPair({ device, session, code }) {
   })
   if (!res.ok) {
     let msg = `pair failed: ${res.status}`
-    try { const j = await res.json(); if (j?.error) msg = j.error } catch {}
-    throw new Error(msg)
+    let codeStr
+    try { const j = await res.json(); if (j?.error) { msg = j.error; codeStr = j.error } } catch {}
+    const err = new Error(msg)
+    err.status = res.status
+    if (codeStr) err.code = codeStr
+    throw err
   }
   const { token, ttl } = await res.json()
   if (!token) throw new Error('No token returned')
