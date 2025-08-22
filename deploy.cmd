@@ -52,6 +52,7 @@ REM --- Capture release notes (one-line) from first arg or prompt ---
 set "MSG=%~1"
 if not defined MSG set /p MSG=Release notes - one line: 
 if not defined MSG set "MSG=Release %DATE% %TIME%"
+set "TAG=%~2"
 
 echo [STEP] Building production bundle...
 call npm.cmd run build
@@ -62,6 +63,19 @@ git rev-parse --is-inside-work-tree >nul 2>nul
 if errorlevel 1 goto :nogitrepo
 goto :gitrepo
 :gitrepo
+REM If a tag was provided, append a CHANGELOG entry now so it gets committed.
+if defined TAG (
+  echo [STEP] Updating CHANGELOG.md for tag %TAG%
+  if not exist "CHANGELOG.md" (
+    >"CHANGELOG.md" echo # Changelog
+    >>"CHANGELOG.md" echo
+    >>"CHANGELOG.md" echo All notable changes to this project will be documented in this file.
+    >>"CHANGELOG.md" echo
+  )
+  >>"CHANGELOG.md" echo ## %TAG% - %DATE% %TIME%
+  >>"CHANGELOG.md" echo - %MSG%
+  >>"CHANGELOG.md" echo
+)
 echo [STEP] Staging changes - git add -A
 git add -A
 if errorlevel 1 goto :fail
@@ -78,6 +92,13 @@ if errorlevel 1 goto :fail
 echo [STEP] Pushing to current upstream...
 git push
 if errorlevel 1 goto :fail
+if defined TAG (
+  echo [STEP] Creating and pushing git tag %TAG%
+  git tag -a "%TAG%" -m "%MSG%"
+  if errorlevel 1 goto :fail
+  git push origin "%TAG%"
+  if errorlevel 1 goto :fail
+)
 goto :after_git
 
 :no_commit
