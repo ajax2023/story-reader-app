@@ -6,9 +6,11 @@ import UploadDrawer from './components/UploadDrawer.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import PairDevice from './components/PairDevice.jsx'
 import DevicesPanel from './components/DevicesPanel.jsx'
+import DebugConsole from './components/DebugConsole.jsx'
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [debugOpen, setDebugOpen] = useState(false)
   const [settings, setSettings] = useState({ kbps: 64, sampleRate: 22050, chunk: Number(import.meta.env.VITE_DEFAULT_CHUNK_BYTES || import.meta.env.VITE_MAX_CHUNK_BYTES || 32768), deviceId: localStorage.getItem('micDeviceId') || '' })
   const apiBase = (import.meta.env.VITE_API_BASE || '').toString()
   const apiUploadDefault = apiBase ? `${apiBase.replace(/\/$/, '')}/audio/upload` : ''
@@ -27,6 +29,7 @@ function App() {
       <header className="header">
         <div className="brand">Story PWA</div>
         <div className="spacer" />
+        <button className="icon" onClick={() => setDebugOpen(true)} title="Debug logs">🐞</button>
         <button className="icon" onClick={() => setSettingsOpen(true)} title="Settings">⚙️</button>
       </header>
 
@@ -63,6 +66,7 @@ function App() {
       </main>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} setSettings={setSettings} />
+      <DebugConsole open={debugOpen} onClose={() => setDebugOpen(false)} />
     </div>
   )
 }

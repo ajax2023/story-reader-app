@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getMyDevices, patchDevice } from '../lib/api'
 import { saveDevice, listDevices as listCachedDevices } from '../lib/idb'
+import { info, warn, error as logError, debug } from '../lib/log'
 
 export default function DevicesPanel({ onChanged }) {
   const [devices, setDevices] = useState([])
@@ -11,14 +12,19 @@ export default function DevicesPanel({ onChanged }) {
     setError('')
     setLoading(true)
     try {
+      info('DevicesPanel: loading devices')
       const fresh = await getMyDevices()
-      const normalized = (fresh || []).map(d => ({ id: d.id, name: d.name || d.id, lastSeen: d.lastSeen || null, localUrl: d.localUrl || '' }))
+      const list = Array.isArray(fresh) ? fresh : (Array.isArray(fresh?.devices) ? fresh.devices : [])
+      debug('DevicesPanel: devices raw', fresh)
+      const normalized = (list || []).map(d => ({ id: d.id, name: d.name || d.id, lastSeen: d.lastSeen || null, localUrl: d.localUrl || '' }))
       setDevices(normalized)
       for (const d of normalized) await saveDevice(d)
       onChanged && onChanged(normalized)
     } catch (e) {
       setError(e.message || 'Failed to load devices, showing cached list')
+      logError('DevicesPanel: load failed', { error: String(e) })
       const cached = await listCachedDevices()
+      warn('DevicesPanel: using cached devices', cached)
       setDevices(cached)
     } finally {
       setLoading(false)
@@ -30,11 +36,13 @@ export default function DevicesPanel({ onChanged }) {
   async function save(idx) {
     const d = devices[idx]
     try {
+      info('DevicesPanel: saving device', { id: d.id, localUrl: d.localUrl })
       await patchDevice(d.id, { localUrl: d.localUrl })
       await saveDevice(d)
       onChanged && onChanged(devices)
       alert('Saved')
     } catch (e) {
+      logError('DevicesPanel: save failed', { error: String(e) })
       alert('Save failed: ' + (e.message || ''))
     }
   }

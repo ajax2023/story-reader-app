@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { claimPair } from '../lib/api'
+import { info, error as logError, debug } from '../lib/log'
 
 export default function PairDevice({ onPaired }) {
   const [code, setCode] = useState('')
@@ -13,11 +14,14 @@ export default function PairDevice({ onPaired }) {
     if (c.length !== 7) { setError('Enter 7-character code'); return }
     setBusy(true)
     try {
-      await claimPair(c)
+      info('PairDevice: claiming code', { code: c })
+      const res = await claimPair(c)
+      debug('PairDevice: claim result', res)
       setCode('')
       onPaired && onPaired()
     } catch (err) {
       setError(err.message || 'Pairing failed')
+      logError('PairDevice: claim failed', { error: String(err) })
     } finally {
       setBusy(false)
     }
