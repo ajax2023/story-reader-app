@@ -1,5 +1,5 @@
 import { getUploadState, setUploadState, getDB, getMp3Chunk } from './idb'
-import { authHeaders, loadDeviceAuth } from './deviceAuth'
+import { authHeaders, loadDeviceAuth, clearDeviceAuth } from './deviceAuth'
 
 const DEFAULT_CHUNK = Number(import.meta.env.VITE_MAX_CHUNK_BYTES || import.meta.env.VITE_DEFAULT_CHUNK_BYTES || 32768)
 const MAX_FILE_BYTES = Number(import.meta.env.VITE_MAX_FILE_BYTES || 52428800)
@@ -157,6 +157,10 @@ export async function uploadToDevice({ clipId, device, onProgress }) {
   // 1) HEAD to get current offset
   try {
     const head = await fetchWithRetry(headUrl, { method: 'HEAD', mode: 'cors', headers: { ...authHeaders() } })
+    if (head.status === 401) {
+      clearDeviceAuth()
+      throw new Error('401 unauthorized (token expired). Please re-pair the device.')
+    }
     const off = head.headers.get('Upload-Offset') || head.headers.get('upload-offset')
     if (off) offset = Math.max(offset, Number(off))
   } catch {}
@@ -182,6 +186,11 @@ export async function uploadToDevice({ clipId, device, onProgress }) {
       if (chunkBytes > 8192) chunkBytes = Math.max(8192, Math.floor(chunkBytes / 2))
       throw e
     })
+
+    if (res.status === 401) {
+      clearDeviceAuth()
+      throw new Error('401 unauthorized (token expired). Please re-pair the device.')
+    }
 
     if (res.status === 308 || res.status === 201 || res.ok) {
       const next = res.headers.get('Upload-Offset')

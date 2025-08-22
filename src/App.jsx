@@ -7,7 +7,7 @@ import SettingsModal from './components/SettingsModal.jsx'
 import PairDevice from './components/PairDevice.jsx'
 import DevicesPanel from './components/DevicesPanel.jsx'
 import DebugConsole from './components/DebugConsole.jsx'
-import { parseLaunchParams, getStatus, confirmPair, saveDeviceAuth } from './lib/deviceAuth'
+import { parseLaunchParams, getStatus, confirmPair, saveDeviceAuth, loadDeviceAuth, clearDeviceAuth, warnIfNonProdOrigin } from './lib/deviceAuth'
 import { info, warn, error as logError } from './lib/log'
 
 function App() {
@@ -20,6 +20,7 @@ function App() {
   const [lastClipId, setLastClipId] = useState(null)
   const [devices, setDevices] = useState([])
   const [selectedDeviceId, setSelectedDeviceId] = useState(localStorage.getItem('selectedDeviceId') || '')
+  const [{ pairedDevice }, setPaired] = useState({ pairedDevice: (loadDeviceAuth().device || '') })
 
   useEffect(() => { localStorage.setItem('baseUrl', baseUrl || '') }, [baseUrl])
   useEffect(() => { localStorage.setItem('selectedDeviceId', selectedDeviceId || '') }, [selectedDeviceId])
@@ -28,6 +29,9 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
+        if (warnIfNonProdOrigin()) {
+          alert('Note: Device CORS allows only https://story-reader-pwa.web.app. Pairing/uploads may fail on this origin.')
+        }
         const { device, action, session } = parseLaunchParams(window.location.search)
         if (device) {
           // Save/normalize device origin early so uploads know where to go
@@ -35,6 +39,7 @@ function App() {
           info('App: device param detected', { device })
           // Optional handshake
           try { await getStatus(device) } catch (e) { warn('App: device status failed', String(e)) }
+          setPaired({ pairedDevice: loadDeviceAuth().device || '' })
         }
         if (action === 'pair' && session && device) {
           // Prompt for 6-digit code
@@ -44,6 +49,7 @@ function App() {
             const { token, ttl } = await confirmPair({ device, session, code })
             info('App: device paired', { ttl, hasToken: !!token })
             alert('Device paired successfully')
+            setPaired({ pairedDevice: loadDeviceAuth().device || '' })
           } catch (e) {
             logError('App: pairing failed', String(e))
             alert('Pairing failed: ' + (e.message || String(e)))
@@ -61,6 +67,12 @@ function App() {
     <div className="app">
       <header className="header">
         <div className="brand">Story PWA</div>
+        {pairedDevice ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <small style={{ opacity: 0.8 }}>Paired: {pairedDevice}</small>
+            <button className="icon" title="Forget device" onClick={() => { if (confirm('Forget paired device?')) { clearDeviceAuth(); setPaired({ pairedDevice: '' }); alert('Device forgotten. Re-pair to continue.')} }}>🗑️</button>
+          </div>
+        ) : null}
         <div className="spacer" />
         <button className="icon" onClick={() => setDebugOpen(true)} title="Debug logs">🐞</button>
         <button className="icon" onClick={() => setSettingsOpen(true)} title="Settings">⚙️</button>

@@ -34,6 +34,15 @@ export function loadDeviceAuth() {
   return { device, token, exp, expired }
 }
 
+export function clearDeviceAuth() {
+  try {
+    localStorage.removeItem('storyDevice')
+    localStorage.removeItem('storyToken')
+    localStorage.removeItem('storyTokenExp')
+  } catch {}
+  info('deviceAuth: cleared')
+}
+
 export function authHeaders() {
   const { token } = loadDeviceAuth()
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -47,6 +56,10 @@ export async function getStatus(device) {
       cache: 'no-store',
       headers: { ...authHeaders() },
     })
+    if (res.status === 401) {
+      clearDeviceAuth()
+      throw new Error('401 unauthorized (token expired)')
+    }
     if (!res.ok) throw new Error(`status ${res.status}`)
     const json = await res.json().catch(() => ({}))
     debug('deviceAuth: status', json)
@@ -75,4 +88,15 @@ export async function confirmPair({ device, session, code }) {
   if (!token) throw new Error('No token returned')
   saveDeviceAuth({ device, token, ttl })
   return { token, ttl }
+}
+
+export function warnIfNonProdOrigin() {
+  const allowed = 'https://story-reader-pwa.web.app'
+  try {
+    if (location.origin !== allowed) {
+      warn('CORS: Device allows only production origin', { current: location.origin, allowed })
+      return true
+    }
+  } catch {}
+  return false
 }
