@@ -12,6 +12,17 @@ export default defineConfig({
       includeAssets: ['vite.svg'],
       workbox: {
         navigateFallbackDenylist: [/^\/api\//, /^\/upload\//],
+        runtimeCaching: [
+          {
+            urlPattern: /^\/api\//,
+            handler: 'NetworkOnly'
+          },
+          {
+            // Match common LAN/local hostnames and RFC1918 ranges
+            urlPattern: /^https?:\/\/(localhost|127\.0\.0\.1|.*\.local|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/,
+            handler: 'NetworkOnly'
+          }
+        ]
       },
       manifest: {
         name: 'Story PWA',

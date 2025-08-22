@@ -1,6 +1,6 @@
 import { getUploadState, setUploadState, getDB, getMp3Chunk } from './idb'
 
-const DEFAULT_CHUNK = Number(import.meta.env.VITE_MAX_CHUNK_BYTES || 32768)
+const DEFAULT_CHUNK = Number(import.meta.env.VITE_MAX_CHUNK_BYTES || import.meta.env.VITE_DEFAULT_CHUNK_BYTES || 32768)
 const MAX_FILE_BYTES = Number(import.meta.env.VITE_MAX_FILE_BYTES || 52428800)
 
 async function fetchWithRetry(url, opts, { retries = 3, timeoutMs = 15000 } = {}) {
@@ -39,7 +39,8 @@ export async function uploadClip({ clipId, baseUrl, onProgress }) {
   if (!clip) throw new Error('Clip not found')
   if (clip.sizeBytes > MAX_FILE_BYTES) throw new Error('File too large for upload limit')
 
-  const state = await getUploadState(clipId)
+  const targetKey = baseUrl || 'default'
+  const state = await getUploadState(clipId, targetKey)
   const chunkBytesDefault = DEFAULT_CHUNK
   const strategy = state.strategy || (await probeStrategy(baseUrl)).kind
 
@@ -54,7 +55,7 @@ export async function uploadClip({ clipId, baseUrl, onProgress }) {
       if (off) remoteOffset = Math.max(remoteOffset, Number(off))
     } catch {}
 
-    await setUploadState(clipId, { strategy, offset: remoteOffset })
+    await setUploadState(clipId, targetKey, { strategy, offset: remoteOffset })
 
     let offset = remoteOffset
     let chunkBytes = chunkBytesDefault
@@ -76,7 +77,7 @@ export async function uploadClip({ clipId, baseUrl, onProgress }) {
       })
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
       offset = end
-      await setUploadState(clipId, { offset })
+      await setUploadState(clipId, targetKey, { offset })
       onProgress && onProgress({ offset, total: clip.sizeBytes })
     }
     return { ok: true }
@@ -93,7 +94,7 @@ export async function uploadClip({ clipId, baseUrl, onProgress }) {
     if (!initRes.ok) throw new Error('Init failed')
     const data = await initRes.json()
     uploadId = data.uploadId
-    await setUploadState(clipId, { uploadId, strategy: 'three-step', offset: 0 })
+    await setUploadState(clipId, targetKey, { uploadId, strategy: 'three-step', offset: 0 })
   }
 
   let offset = state.offset || 0
@@ -116,6 +117,104 @@ export async function uploadClip({ clipId, baseUrl, onProgress }) {
   }
 
   const fin = await fetchWithRetry(`${baseUrl}/finish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId, sizeBytes: clip.sizeBytes, md5: clip.md5 || null })
+  })
+  if (!fin.ok) throw new Error('Finish failed')
+  return { ok: true }
+}
+
+// Upload directly to a paired device over LAN using either Content-Range or a three-step protocol.
+// device: { id, localUrl }
+export async function uploadToDevice({ clipId, device, onProgress }) {
+  if (!device || !device.localUrl) throw new Error('Select a device with a Local URL')
+  const db = await getDB()
+  const clip = await db.get('clips', clipId)
+  if (!clip) throw new Error('Clip not found')
+  if (clip.sizeBytes > MAX_FILE_BYTES) throw new Error('File too large for upload limit')
+
+  const filename = encodeURIComponent(clip.filename || (clip.title ? `${clip.title}.mp3` : `${clipId}.mp3`))
+  const origin = device.localUrl.startsWith('http') ? device.localUrl : `http://${device.localUrl}`
+  const base = `${origin.replace(/\/$/, '')}/api/audio/upload`
+  const rangeUrl = `${base}?filename=${filename}`
+  const targetKey = device.id || device.localUrl
+
+  const state = await getUploadState(clipId, targetKey)
+  const chunkBytesDefault = DEFAULT_CHUNK
+  const strategy = state.strategy || (await probeStrategy(rangeUrl)).kind
+
+  if (strategy === 'content-range') {
+    let remoteOffset = state.offset || 0
+    try {
+      const head = await fetchWithRetry(rangeUrl, { method: 'HEAD' })
+      const len = head.headers.get('content-length') || head.headers.get('Content-Length')
+      if (len) remoteOffset = Math.max(remoteOffset, Number(len))
+      const off = head.headers.get('x-upload-offset') || head.headers.get('X-Upload-Offset')
+      if (off) remoteOffset = Math.max(remoteOffset, Number(off))
+    } catch {}
+
+    await setUploadState(clipId, targetKey, { strategy, offset: remoteOffset })
+
+    let offset = remoteOffset
+    let chunkBytes = chunkBytesDefault
+    while (offset < clip.sizeBytes) {
+      const end = Math.min(clip.sizeBytes, offset + chunkBytes)
+      const body = await getMp3Chunk(clipId, offset, end)
+      const res = await fetchWithRetry(rangeUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'audio/mpeg',
+          'Content-Range': `bytes ${offset}-${end - 1}/${clip.sizeBytes}`,
+          ...(clip.md5 ? { 'Content-MD5': clip.md5 } : {})
+        },
+        body
+      }).catch(async (e) => {
+        if (chunkBytes > 8192) chunkBytes = Math.max(8192, Math.floor(chunkBytes / 2))
+        throw e
+      })
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+      offset = end
+      await setUploadState(clipId, targetKey, { offset })
+      onProgress && onProgress({ offset, total: clip.sizeBytes })
+    }
+    return { ok: true }
+  }
+
+  // three-step protocol
+  let { uploadId } = state
+  if (!uploadId) {
+    const initRes = await fetchWithRetry(`${base}/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sizeBytes: clip.sizeBytes, md5: clip.md5 || null, filename: decodeURIComponent(filename) })
+    })
+    if (!initRes.ok) throw new Error('Init failed')
+    const data = await initRes.json()
+    uploadId = data.uploadId
+    await setUploadState(clipId, targetKey, { uploadId, strategy: 'three-step', offset: 0 })
+  }
+
+  let offset = state.offset || 0
+  let chunkBytes = chunkBytesDefault
+  while (offset < clip.sizeBytes) {
+    const end = Math.min(clip.sizeBytes, offset + chunkBytes)
+    const body = await getMp3Chunk(clipId, offset, end)
+    const res = await fetchWithRetry(`${base}/chunk?uploadId=${encodeURIComponent(uploadId)}&offset=${offset}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body
+    }).catch(async (e) => {
+      if (chunkBytes > 8192) chunkBytes = Math.max(8192, Math.floor(chunkBytes / 2))
+      throw e
+    })
+    if (!res.ok) throw new Error(`Chunk failed: ${res.status}`)
+    offset = end
+    await setUploadState(clipId, targetKey, { offset })
+    onProgress && onProgress({ offset, total: clip.sizeBytes })
+  }
+
+  const fin = await fetchWithRetry(`${base}/finish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uploadId, sizeBytes: clip.sizeBytes, md5: clip.md5 || null })

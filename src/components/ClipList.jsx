@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { getDB, listClips, deleteClip, updateClip, getAudioBlob } from '../lib/idb'
-import { uploadClip } from '../lib/uploader'
+import { uploadClip, uploadToDevice } from '../lib/uploader'
 
-export default function ClipList({ baseUrl }) {
+export default function ClipList({ baseUrl, device }) {
   const [clips, setClips] = useState([])
   const [uploading, setUploading] = useState(null)
   const [progress, setProgress] = useState({})
@@ -80,6 +80,20 @@ export default function ClipList({ baseUrl }) {
     }
   }
 
+  async function handleUploadToDevice(id) {
+    if (!device || !device.localUrl) { alert('Select a device with a Local URL'); return }
+    setUploading(id)
+    try {
+      await uploadToDevice({ clipId: id, device, onProgress: (p) => setProgress(prev => ({ ...prev, [id]: p })) })
+      alert('Device upload complete')
+    } catch (e) {
+      alert('Device upload failed: ' + e.message)
+    } finally {
+      setUploading(null)
+      refresh()
+    }
+  }
+
   return (
     <div className="clips">
       {clips.map(c => (
@@ -104,6 +118,13 @@ export default function ClipList({ baseUrl }) {
             <button onClick={() => handleDelete(c.id)}>Delete</button>
             <button disabled={!navigator.onLine || uploading === c.id || !baseUrl} onClick={() => handleUpload(c.id)}>
               {uploading === c.id ? `${Math.floor(((progress[c.id]?.offset||0)/(c.sizeBytes||1))*100)}%` : 'Upload'}
+            </button>
+            <button
+              disabled={uploading === c.id || !device || !device.localUrl}
+              title={!device ? 'Select a device' : (!device.localUrl ? 'Set device Local URL' : 'Upload directly over LAN')}
+              onClick={() => handleUploadToDevice(c.id)}
+            >
+              {uploading === c.id ? `${Math.floor(((progress[c.id]?.offset||0)/(c.sizeBytes||1))*100)}%` : 'Upload to Device'}
             </button>
           </div>
         </div>

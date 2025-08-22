@@ -1,14 +1,15 @@
 import { openDB } from 'idb'
 
 const DB_NAME = 'story-pwa'
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 // Stores:
 // clips: { id, title, duration, sizeBytes, createdAt, md5, status, sampleRate, channels }
 // pcm: { key: `${clipId}:${seq}`, clipId, seq, sampleStart, sampleEnd, buffer (Float32Array) } (legacy)
 // frames: { key: `${clipId}:${seq}`, clipId, seq, byteStart, byteEnd, buffer (Uint8Array) } (legacy)
 // blobs: { clipId, blob (Blob) }
-// uploads: { clipId, strategy, offset, uploadId }
+// uploads: { key: `${clipId}:${target}`, clipId, target, strategy, offset, uploadId }
+// devices: { id, name, lastSeen, localUrl }
 
 export async function getDB() {
   return openDB(DB_NAME, DB_VERSION, {
@@ -16,6 +17,9 @@ export async function getDB() {
       if (!db.objectStoreNames.contains('clips')) {
         const s = db.createObjectStore('clips', { keyPath: 'id' })
         s.createIndex('createdAt', 'createdAt')
+      }
+      if (!db.objectStoreNames.contains('devices')) {
+        db.createObjectStore('devices', { keyPath: 'id' })
       }
       if (!db.objectStoreNames.contains('pcm')) {
         const s = db.createObjectStore('pcm', { keyPath: 'key' })
@@ -28,9 +32,11 @@ export async function getDB() {
         const s = db.createObjectStore('frames', { keyPath: 'key' })
         s.createIndex('clipId', 'clipId')
       }
-      if (!db.objectStoreNames.contains('uploads')) {
-        db.createObjectStore('uploads', { keyPath: 'clipId' })
+      // Replace legacy 'uploads' keyed by clipId with composite-key version
+      if (db.objectStoreNames.contains('uploads')) {
+        try { db.deleteObjectStore('uploads') } catch {}
       }
+      db.createObjectStore('uploads', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('blobs')) {
         db.createObjectStore('blobs', { keyPath: 'clipId' })
       }
@@ -73,7 +79,14 @@ export async function deleteClip(id) {
   const frameKeys = await db.getAllKeysFromIndex('frames', 'clipId', IDBKeyRange.only(id))
   for (const key of frameKeys) await db.delete('frames', key)
   await db.delete('blobs', id)
-  await db.delete('uploads', id)
+  try {
+    const uploadKeys = await db.getAllKeys('uploads')
+    for (const k of uploadKeys) {
+      if (typeof k === 'string' && k.startsWith(`${id}:`)) {
+        await db.delete('uploads', k)
+      }
+    }
+  } catch {}
   await db.delete('clips', id)
 }
 
@@ -164,15 +177,34 @@ export async function getMp3Chunk(clipId, start, endExclusive) {
 }
 
 // Upload checkpoints
-export async function getUploadState(clipId) {
+export async function getUploadState(clipId, target) {
   const db = await getDB()
-  return (await db.get('uploads', clipId)) || { clipId, offset: 0 }
+  const key = `${clipId}:${target || ''}`
+  return (await db.get('uploads', key)) || { key, clipId, target, offset: 0 }
 }
 
-export async function setUploadState(clipId, patch) {
+export async function setUploadState(clipId, target, patch) {
   const db = await getDB()
-  const curr = (await db.get('uploads', clipId)) || { clipId, offset: 0 }
+  const key = `${clipId}:${target || ''}`
+  const curr = (await db.get('uploads', key)) || { key, clipId, target, offset: 0 }
   const next = { ...curr, ...patch }
   await db.put('uploads', next)
   return next
+}
+
+// Devices helpers (cached from backend plus local edits)
+export async function saveDevice(dev) {
+  const db = await getDB()
+  await db.put('devices', dev)
+  return dev
+}
+
+export async function getDevice(id) {
+  const db = await getDB()
+  return db.get('devices', id)
+}
+
+export async function listDevices() {
+  const db = await getDB()
+  return db.getAll('devices')
 }
