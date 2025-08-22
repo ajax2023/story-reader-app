@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getDB, listClips, deleteClip, updateClip, getAudioBlob } from '../lib/idb'
 import { uploadClip, uploadToDevice } from '../lib/uploader'
 import { info, error as logError, debug } from '../lib/log'
+import { loadDeviceAuth } from '../lib/deviceAuth'
 
 export default function ClipList({ baseUrl, device }) {
   const [clips, setClips] = useState([])
@@ -84,11 +85,12 @@ export default function ClipList({ baseUrl, device }) {
   }
 
   async function handleUploadToDevice(id) {
-    if (!device || !device.localUrl) { alert('Select a device with a Local URL'); return }
+    const { device: pairedDevice } = loadDeviceAuth()
+    if (!device?.localUrl && !pairedDevice) { alert('No device selected or paired. Pair your device or set a Local URL.'); return }
     setUploading(id)
     try {
-      info('ClipList: upload to device start', { clipId: id, deviceId: device.id, localUrl: device.localUrl })
-      await uploadToDevice({ clipId: id, device, onProgress: (p) => { debug('ClipList: device progress', { clipId: id, p }); setProgress(prev => ({ ...prev, [id]: p })) } })
+      info('ClipList: upload to device start', { clipId: id, deviceId: device?.id || null, localUrl: device?.localUrl || pairedDevice })
+      await uploadToDevice({ clipId: id, device: device || { localUrl: pairedDevice }, onProgress: (p) => { debug('ClipList: device progress', { clipId: id, p }); setProgress(prev => ({ ...prev, [id]: p })) } })
       alert('Device upload complete')
     } catch (e) {
       logError('ClipList: upload to device failed', { clipId: id, error: String(e) })

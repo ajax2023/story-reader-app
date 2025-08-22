@@ -7,6 +7,8 @@ import SettingsModal from './components/SettingsModal.jsx'
 import PairDevice from './components/PairDevice.jsx'
 import DevicesPanel from './components/DevicesPanel.jsx'
 import DebugConsole from './components/DebugConsole.jsx'
+import { parseLaunchParams, getStatus, confirmPair, saveDeviceAuth } from './lib/deviceAuth'
+import { info, warn, error as logError } from './lib/log'
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -21,6 +23,37 @@ function App() {
 
   useEffect(() => { localStorage.setItem('baseUrl', baseUrl || '') }, [baseUrl])
   useEffect(() => { localStorage.setItem('selectedDeviceId', selectedDeviceId || '') }, [selectedDeviceId])
+
+  // Parse URL params for device pairing flow
+  useEffect(() => {
+    (async () => {
+      try {
+        const { device, action, session } = parseLaunchParams(window.location.search)
+        if (device) {
+          // Save/normalize device origin early so uploads know where to go
+          saveDeviceAuth({ device })
+          info('App: device param detected', { device })
+          // Optional handshake
+          try { await getStatus(device) } catch (e) { warn('App: device status failed', String(e)) }
+        }
+        if (action === 'pair' && session && device) {
+          // Prompt for 6-digit code
+          const code = window.prompt('Enter the 6-digit code shown on the device:', '')
+          if (!code) return
+          try {
+            const { token, ttl } = await confirmPair({ device, session, code })
+            info('App: device paired', { ttl, hasToken: !!token })
+            alert('Device paired successfully')
+          } catch (e) {
+            logError('App: pairing failed', String(e))
+            alert('Pairing failed: ' + (e.message || String(e)))
+          }
+        }
+      } catch (e) {
+        warn('App: param parse flow error', String(e))
+      }
+    })()
+  }, [])
 
   const selectedDevice = devices.find(d => d.id === selectedDeviceId)
 
